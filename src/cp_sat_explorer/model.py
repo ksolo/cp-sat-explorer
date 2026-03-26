@@ -1,5 +1,7 @@
 import math
+from copy import deepcopy
 from typing import Tuple, Callable, List
+from dataclasses import dataclass
 
 # Operators
 def lte(val, bound) -> bool:
@@ -34,7 +36,7 @@ class Variable:
     
 
 class Constraint:
-    def propogate(self) -> bool:
+    def propagate(self) -> bool:
         raise NotImplementedError
 
 
@@ -43,8 +45,13 @@ class LinearConstraint(Constraint):
         self.terms = terms
         self.operator = operator
         self.bound = bound
+    
+    @property
+    def variables(self):
+        return [term[1] for term in self.terms]
 
-    def propogate(self) -> bool:
+
+    def propagate(self) -> bool:
         if self.operator == lte:
             total = 0
             for term in self.terms:
@@ -76,7 +83,7 @@ class AllDifferentConstraint(Constraint):
         self.variables = variables
 
 
-    def propogate(self):
+    def propagate(self):
         assignments = {var.name: var.assigned_val() for var in self.variables if var.is_assigned()}
 
         if not len(assignments):
@@ -111,4 +118,115 @@ class CSPModel:
 
     def add_constraint(self, constraint: Constraint):
         self.constraints.append(constraint)
+
+
+@dataclass
+class TrailEntry:
+    variable: Variable
+    constraint: Constraint
+    value: int
+    level: int
+
+
+@dataclass
+class NoGood:
+    literals: List[Tuple[str, int]]
     
+
+class Solver:
+    def __init__(self, model: CSPModel):
+        self.model = model
+        self.trail_entries = []
+        self.no_goods = []
+        self.level = 0
+        self.variables = {
+            var.name: var
+            for var in self.model.variables
+        }
+
+
+    def propagate_all(self) -> bool:
+        while True:
+            changed = False
+            domains = {var.name: deepcopy(var.domain) for var in self.model.variables}
+
+            self.propagate_no_goods()
+            for constraint in self.model.constraints:
+                result = constraint.propagate()
+                if not result:
+                    return False # contradition was found - cannot be solved
+                
+                for var in constraint.variables:
+                    if domains[var.name] != var.domain:
+                        changed = True
+                        if var.is_assigned():
+                            self.trail_entries.append(
+                                TrailEntry(
+                                    variable=var,
+                                    constraint=constraint,
+                                    value=var.assigned_val(),
+                                    level=self.level
+                                )
+                            )
+            
+            if not changed:
+                break
+
+        return True
+
+        
+    def propagate_no_goods(self):
+        
+
+
+    def _set_no_goods(self):
+        decisions = [entry for entry in self.trail_entries if entry.constraint is None]
+        no_good = NoGood(literals=[
+            (entry.variable.name, entry.variable.assigned_val())
+            for entry in decisions
+        ])
+        self.no_goods.append(no_good)
+
+        
+    def solve(self) -> bool:
+        if not self.propagate_all():
+            self._set_no_goods()
+            return False
+
+        if all([var.is_assigned() for var in self.model.variables]):
+            return True 
+        
+        min_domain = float(math.inf)
+        min_var = None
+        for var in self.model.variables:
+            if var.is_assigned():
+                continue
+
+            domain_len = len(var.domain)
+            if domain_len < min_domain:
+                min_domain = domain_len
+                min_var = var
+        
+        for val in list(min_var.domain):
+            self.level += 1
+            domains = {var.name: deepcopy(var.domain) for var in self.model.variables}
+            min_var.domain = {val}
+            self.trail_entries.append(
+                TrailEntry(
+                    variable=min_var,
+                    value=val,
+                    constraint=None,
+                    level=self.level
+                )
+            )
+
+            if self.solve():
+                return True
+
+            for var in self.model.variables:
+                var.domain = domains[var.name]
+        
+            self.trail_entries = [e for e in self.trail_entries if e.level < self.level]
+            self.level -= 1
+
+        return False
