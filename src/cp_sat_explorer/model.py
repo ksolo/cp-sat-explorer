@@ -93,7 +93,7 @@ class AllDifferentConstraint(Constraint):
             # we have a duplicate
             return False
         
-        for name, assignment in assignments.items():
+        for _, assignment in assignments.items():
             for var in self.variables:
                 if var.is_assigned():
                     continue
@@ -150,10 +150,10 @@ class Solver:
             changed = False
             domains = {var.name: deepcopy(var.domain) for var in self.model.variables}
 
-            self.propagate_no_goods()
+            no_good_result = self.propagate_no_goods()
             for constraint in self.model.constraints:
                 result = constraint.propagate()
-                if not result:
+                if not result or not no_good_result:
                     return False # contradition was found - cannot be solved
                 
                 for var in constraint.variables:
@@ -175,7 +175,30 @@ class Solver:
         return True
 
         
-    def propagate_no_goods(self):
+    def propagate_no_goods(self) -> bool:
+        for no_good in self.no_goods:
+            matched_bad_variables = []
+            unmatched_unassigned = []
+
+            for literal in no_good.literals:
+                variable = self.variables[literal[0]]
+                if variable.is_assigned() and variable.assigned_val() == literal[1]:
+                    matched_bad_variables.append(variable)
+                elif not variable.is_assigned():
+                    unmatched_unassigned.append((variable, literal[1]))
+                
+            if len(matched_bad_variables) == len(no_good.literals) - 1 and len(unmatched_unassigned) == 1:
+                variable = unmatched_unassigned[0][0]
+                value_to_remove = unmatched_unassigned[0][1]
+                
+                variable.domain.discard(value_to_remove)
+                if len(variable.domain) == 0:
+                    return False
+
+            elif len(matched_bad_variables) == len(no_good.literals):
+                return False
+
+        return True
         
 
 
